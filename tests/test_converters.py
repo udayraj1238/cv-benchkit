@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,10 @@ from pydantic import ValidationError
 
 from cv_benchkit.converters import (
     BBox,
+    COCOAnnotation,
+    COCOCategory,
     COCODataset,
+    COCOImage,
     coco_to_voc,
     coco_to_yolo,
     cxcywh_to_xyxy,
@@ -26,6 +30,22 @@ from cv_benchkit.converters import (
     yolo_to_coco,
     yolo_to_voc,
 )
+
+
+@pytest.mark.parametrize("converter", [coco_to_yolo, coco_to_voc])
+@pytest.mark.parametrize("as_string", [False, True])
+def test_coco_output_rejects_existing_file_without_changing_it(
+    tmp_path: Path,
+    converter: Callable[[COCODataset, Path | str], list[Path]],
+    as_string: bool,
+) -> None:
+    output = tmp_path / "existing labels.txt"
+    output.write_text("preserve this file", encoding="utf-8")
+    dataset = COCODataset(images=[], annotations=[], categories=[])
+    with pytest.raises(NotADirectoryError, match="output_dir cannot be an existing file") as exc:
+        converter(dataset, str(output) if as_string else output)
+    assert str(output) in str(exc.value)
+    assert output.read_text(encoding="utf-8") == "preserve this file"
 
 
 class TestBBoxConversions:
@@ -120,6 +140,34 @@ class TestBBoxConversions:
         self, xywh: list[float], expected_xyxy: list[float]
     ) -> None:
         out = xywh_to_xyxy(np.array([xywh]))
+        np.testing.assert_allclose(out[0], expected_xyxy)
+
+    @pytest.mark.parametrize(
+        "invalid_box",
+        [
+            [50.0, 50.0, -5.0, 30.0],
+            [50.0, 50.0, 30.0, -1.0],
+            [50.0, 50.0, -10.0, -20.0],
+            [[50.0, 50.0, 30.0, 40.0], [25.0, 25.0, -1.0, 10.0]],
+        ],
+    )
+    def test_cxcywh_to_xyxy_negative_dimensions_raise(self, invalid_box: list) -> None:
+        boxes = np.array(invalid_box)
+        with pytest.raises(ValueError, match="Box width and height must be non-negative"):
+            cxcywh_to_xyxy(boxes)
+
+    @pytest.mark.parametrize(
+        ("cxcywh", "expected_xyxy"),
+        [
+            ([50.0, 50.0, 0.0, 30.0], [50.0, 35.0, 50.0, 65.0]),
+            ([50.0, 50.0, 30.0, 0.0], [35.0, 50.0, 65.0, 50.0]),
+            ([50.0, 50.0, 0.0, 0.0], [50.0, 50.0, 50.0, 50.0]),
+        ],
+    )
+    def test_cxcywh_to_xyxy_zero_dimensions_pass(
+        self, cxcywh: list[float], expected_xyxy: list[float]
+    ) -> None:
+        out = cxcywh_to_xyxy(np.array([cxcywh]))
         np.testing.assert_allclose(out[0], expected_xyxy)
 
 
@@ -238,7 +286,10 @@ class TestDatasetConversions:
         assert (yolo_rec_dir / "img1.txt").exists()
 
 
-@pytest.mark.parametrize("width,height", [(0, 480), (-1, 480), (640, 0), (640, -1)])
+@pytest.mark.parametrize(
+    "width,height",
+    [(0, 480), (-1, 480), (640, 0), (640, -1)],
+)
 @pytest.mark.parametrize("with_label", [False, True])
 def test_yolo_to_coco_rejects_invalid_image_dimensions(
     tmp_path: Path, width: int, height: int, with_label: bool
@@ -247,3 +298,57 @@ def test_yolo_to_coco_rejects_invalid_image_dimensions(
         (tmp_path / "invalid.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"invalid.*positive"):
         yolo_to_coco(tmp_path, {"invalid": (width, height)}, ["object"])
+
+
+class TestCOCOAnnotation:
+    @pytest.mark.parametrize("area", [-0.25, float("nan"), float("inf"), float("-inf")])
+    def test_rejects_invalid_area(self, area: float) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            COCOAnnotation(id=1, image_id=1, category_id=1, bbox=[0, 0, 5, 4], area=area)
+
+        assert exc_info.value.errors()[0]["loc"] == ("area",)
+
+    @pytest.mark.parametrize("area", [0.0, 12.5])
+    def test_accepts_non_negative_area(self, area: float) -> None:
+        annotation = COCOAnnotation(id=1, image_id=1, category_id=1, bbox=[0, 0, 5, 4], area=area)
+        assert annotation.area == area
+
+
+class TestCOCOImage:
+    """Tests for COCOImage positive dimension validation (#44)."""
+
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [(0, 100), (100, -1), (0, 0), (-5, 100), (100, 0)],
+    )
+    def test_rejects_non_positive_dimensions(self, width: int, height: int) -> None:
+        with pytest.raises(ValidationError, match="image dimensions must be positive"):
+            COCOImage(id=1, file_name="img.jpg", width=width, height=height)
+
+    def test_accepts_positive_dimensions(self) -> None:
+        img = COCOImage(id=1, file_name="img.jpg", width=100, height=200)
+        assert img.width == 100
+        assert img.height == 200
+
+
+class TestCOCOCategory:
+    """Tests for COCOCategory id and name validation."""
+
+    def test_accepts_valid_category(self) -> None:
+        cat = COCOCategory(id=1, name="person")
+        assert cat.id == 1
+        assert cat.name == "person"
+
+    def test_rejects_negative_id(self) -> None:
+        with pytest.raises(ValidationError):
+            COCOCategory(id=-1, name="person")
+
+    @pytest.mark.parametrize("name", ["", "   ", "	", "
+"])
+    def test_rejects_empty_or_whitespace_name(self, name: str) -> None:
+        with pytest.raises(ValidationError, match="category name must be a non-empty"):
+            COCOCategory(id=1, name=name)
+
+    def test_accepts_name_with_whitespace_around(self) -> None:
+        cat = COCOCategory(id=0, name=" person ")
+        assert cat.name == " person "

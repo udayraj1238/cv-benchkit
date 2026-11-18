@@ -25,7 +25,7 @@ from xml.dom import minidom
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 # ---------------------------------------------------------------------------
 # Pydantic models for validation
@@ -57,13 +57,13 @@ class BBox(BaseModel):
 
 
 class COCOAnnotation(BaseModel):
-    """Minimal COCO annotation record."""
+    """Minimal COCO annotation record with a finite, non-negative area."""
 
     id: int
     image_id: int
     category_id: int
     bbox: list[float]  # xywh
-    area: float
+    area: float = Field(ge=0, allow_inf_nan=False)
     iscrowd: int = 0
 
     @field_validator("bbox")
@@ -83,13 +83,29 @@ class COCOImage(BaseModel):
     width: int
     height: int
 
+    @field_validator("width", "height")
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v <= 0:
+            msg = "image dimensions must be positive"
+            raise ValueError(msg)
+        return v
+
 
 class COCOCategory(BaseModel):
     """Minimal COCO category record."""
 
-    id: int
+    id: int = Field(ge=0)
     name: str
     supercategory: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _non_empty_name(cls, v: str) -> str:
+        if not v.strip():
+            msg = "category name must be a non-empty string that does not consist solely of whitespace"
+            raise ValueError(msg)
+        return v
 
 
 class COCODataset(BaseModel):
@@ -230,12 +246,20 @@ def cxcywh_to_xyxy(boxes: NDArray[np.floating[Any]]) -> NDArray[np.floating[Any]
     -------
     ndarray, shape ``(N, 4)``
         Each row is ``[x_min, y_min, x_max, y_max]``.
+
+    Raises
+    ------
+    ValueError
+        If any box has negative width or height.
     """
     boxes = np.asarray(boxes, dtype=np.float64)
     if boxes.ndim == 1:
         boxes = boxes.reshape(1, 4)
     if boxes.shape[0] == 0:
         return np.empty((0, 4), dtype=np.float64)
+    if np.any(boxes[:, 2] < 0) or np.any(boxes[:, 3] < 0):
+        msg = "Box width and height must be non-negative"
+        raise ValueError(msg)
     out = np.empty_like(boxes)
     half_w = boxes[:, 2] / 2
     half_h = boxes[:, 3] / 2
@@ -347,8 +371,16 @@ def coco_to_yolo(
     -------
     list[Path]
         Paths of the written label files.
+
+    Raises
+    ------
+    NotADirectoryError
+        If ``output_dir`` is an existing file.
     """
     output_dir = Path(output_dir)
+    if output_dir.is_file():
+        msg = f"output_dir cannot be an existing file: {output_dir}"
+        raise NotADirectoryError(msg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if category_map is None:
@@ -453,8 +485,16 @@ def coco_to_voc(
     -------
     list[Path]
         Paths of the written XML files.
+
+    Raises
+    ------
+    NotADirectoryError
+        If ``output_dir`` is an existing file.
     """
     output_dir = Path(output_dir)
+    if output_dir.is_file():
+        msg = f"output_dir cannot be an existing file: {output_dir}"
+        raise NotADirectoryError(msg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cat_lookup: dict[int, str] = {c.id: c.name for c in coco.categories}
