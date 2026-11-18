@@ -103,7 +103,10 @@ class COCOCategory(BaseModel):
     @classmethod
     def _non_empty_name(cls, v: str) -> str:
         if not v.strip():
-            msg = "category name must be a non-empty string that does not consist solely of whitespace"
+            msg = (
+                "category name must be a non-empty string "
+                "that does not consist solely of whitespace"
+            )
             raise ValueError(msg)
         return v
 

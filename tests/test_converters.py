@@ -343,8 +343,7 @@ class TestCOCOCategory:
         with pytest.raises(ValidationError):
             COCOCategory(id=-1, name="person")
 
-    @pytest.mark.parametrize("name", ["", "   ", "	", "
-"])
+    @pytest.mark.parametrize("name", ["", "   ", "\t", "\n"])
     def test_rejects_empty_or_whitespace_name(self, name: str) -> None:
         with pytest.raises(ValidationError, match="category name must be a non-empty"):
             COCOCategory(id=1, name=name)
