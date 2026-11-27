@@ -14,8 +14,8 @@ We are committed to providing a friendly, safe, and welcoming environment for al
 
 We keep a curated list of newcomer-friendly tasks labeled [`good first issue`](https://github.com/udayraj1238/cv-benchkit/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
-- **How to Claim an Issue:** Post a short comment on an unclaimed `good first issue` before or when opening your PR stating your plan. Include `Closes #<issue-number>` (or `Fixes #<issue-number>`) in your PR description so the issue auto-closes when merged.
-- **First-Time Contributor Priority:** Issues labeled `good first issue` prioritize contributors with 0 prior merged PRs on `cv-benchkit`. Repeat contributors are welcome up to 2-3 merged PRs so every newcomer gets a fair shot.
+- **How to Claim an Issue:** Post a short comment on an unclaimed `good first issue` stating your plan, and wait for issue assignment before opening a PR so contributors do not duplicate work. Include `Closes #<issue-number>` (or `Fixes #<issue-number>`) in your PR description so the issue auto-closes when merged.
+- **First-Time Contributor Priority:** Issues labeled `good first issue` prioritize contributors with 0 prior merged PRs on `cv-benchkit`. Repeat contributors are welcome up to 2 merged PRs per contributor so every newcomer gets a fair shot.
 
 ---
 
