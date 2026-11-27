@@ -390,6 +390,128 @@ def compute_nms(
     return np.asarray(keep, dtype=np.int64)
 
 
+def compute_soft_nms(
+    boxes: NDArray[np.floating[Any]],
+    scores: NDArray[np.floating[Any]],
+    method: str = "linear",
+    iou_threshold: float = 0.5,
+    sigma: float = 0.5,
+    score_threshold: float = 0.001,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Apply Soft-NMS to bounding boxes and confidence scores.
+
+    Soft-NMS (Bodla et al., ICCV 2017, "Soft-NMS -- Improving Object Detection
+    With One Line of Code") follows the greedy loop of :func:`compute_nms`, but
+    instead of removing every box that overlaps the selected one it lowers the
+    box's score as a function of their IoU:
+
+    1. Select the remaining box with the highest current score.
+    2. Multiply the score of every other remaining box by a decay weight
+       computed from its IoU with the selected box.
+    3. Drop the remaining boxes whose score is now below ``score_threshold``,
+       and repeat until no box remains.
+
+    The decay weights are
+
+    * ``"linear"``: ``1 - iou`` when ``iou >= iou_threshold``, else ``1``;
+    * ``"gaussian"``: ``exp(-(iou ** 2) / sigma)``, for every IoU.
+
+    Scores only ever decrease, so the boxes come out in the order they were
+    selected, which is descending updated score. Boxes with equal scores are
+    selected in input order, so the result is deterministic. A box whose
+    initial score is already below ``score_threshold`` is never kept.
+
+    IoU is computed with :func:`compute_iou`, one selected box against the
+    remaining boxes at a time, so memory stays ``O(N)``.
+
+    Parameters
+    ----------
+    boxes : ndarray, shape ``(N, 4)``
+        Bounding boxes in ``[x1, y1, x2, y2]`` format.
+    scores : ndarray, shape ``(N,)``
+        Confidence scores for each box. Must be finite.
+    method : {"linear", "gaussian"}, default "linear"
+        Score decay rule (see above).
+    iou_threshold : float, default 0.5
+        IoU at and above which the linear rule decays a score. Must be in
+        ``[0.0, 1.0]``; it is validated but not used by the Gaussian rule.
+    sigma : float, default 0.5
+        Spread of the Gaussian rule. Must be ``> 0``.
+    score_threshold : float, default 0.001
+        Boxes whose (decayed) score falls below this value are discarded.
+
+    Returns
+    -------
+    kept_boxes : ndarray, shape ``(K, 4)``, dtype float64
+        The retained boxes, sorted by updated score descending.
+    kept_scores : ndarray, shape ``(K,)``, dtype float64
+        The updated confidence scores of ``kept_boxes``.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is not ``"linear"`` or ``"gaussian"``, ``sigma <= 0``,
+        ``iou_threshold`` is outside ``[0.0, 1.0]``, ``boxes`` is not
+        ``(N, 4)``, ``scores`` is not a 1D array of length ``N`` or has a
+        non-finite value, or a box is invalid (non-finite or inverted
+        coordinates).
+
+    Examples
+    --------
+    >>> boxes = np.array([[0, 0, 10, 10], [0, 0, 10, 8], [20, 20, 30, 30]], dtype=float)
+    >>> scores = np.array([0.9, 0.8, 0.7])
+    >>> kept_boxes, kept_scores = compute_soft_nms(boxes, scores)
+    >>> kept_scores.round(2)
+    array([0.9 , 0.7 , 0.16])
+    >>> kept_boxes[2]
+    array([ 0.,  0., 10.,  8.])
+    >>> compute_soft_nms(boxes, scores, method="gaussian")[1].round(3)
+    array([0.9  , 0.7  , 0.222])
+    """
+    if method not in ("linear", "gaussian"):
+        raise ValueError(f"Unknown method {method!r}, expected 'linear' or 'gaussian'")
+    if not sigma > 0:
+        raise ValueError(f"sigma must be > 0, got {sigma}")
+    if not 0.0 <= iou_threshold <= 1.0:
+        raise ValueError(f"iou_threshold must be in [0.0, 1.0], got {iou_threshold}")
+
+    boxes_arr = np.asarray(boxes, dtype=np.float64)
+    scores_arr = np.asarray(scores, dtype=np.float64)
+    if boxes_arr.shape == (0,) and scores_arr.size == 0:
+        boxes_arr = boxes_arr.reshape(0, 4)
+    if boxes_arr.ndim != 2 or boxes_arr.shape[1] != 4:
+        raise ValueError(f"boxes must have shape (N, 4), got {boxes_arr.shape}")
+    normalized_boxes = _normalize_boxes(boxes_arr)
+    n = normalized_boxes.shape[0]
+    if scores_arr.ndim != 1 or scores_arr.shape[0] != n:
+        raise ValueError(f"scores must be a 1D array of length {n}, got shape {scores_arr.shape}")
+    if not np.all(np.isfinite(scores_arr)):
+        raise ValueError("scores must be finite (no NaN or Inf)")
+
+    current = scores_arr.copy()
+    remaining = np.flatnonzero(current >= score_threshold)
+    keep: list[int] = []
+    while remaining.size > 0:
+        # argmax returns the first maximum, so ties go to the lowest input index.
+        best = int(remaining[np.argmax(current[remaining])])
+        keep.append(best)
+        remaining = remaining[remaining != best]
+        if remaining.size == 0:
+            break
+        iou = compute_iou(normalized_boxes[best : best + 1], normalized_boxes[remaining])[0]
+        if method == "linear":
+            weight = np.where(iou >= iou_threshold, 1.0 - iou, 1.0)
+        else:
+            weight = np.exp(-(iou**2) / sigma)
+        current[remaining] *= weight
+        remaining = remaining[current[remaining] >= score_threshold]
+
+    index = np.asarray(keep, dtype=np.int64)
+    kept_boxes = np.asarray(normalized_boxes[index], dtype=np.float64).reshape(-1, 4)
+    kept_scores = np.asarray(current[index], dtype=np.float64)
+    return kept_boxes, kept_scores
+
+
 def compute_confusion_matrix(
     gt_labels: NDArray[np.integer[Any]],
     pred_labels: NDArray[np.integer[Any]],

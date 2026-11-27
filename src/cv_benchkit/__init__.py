@@ -30,6 +30,7 @@ from cv_benchkit.metrics import (
     compute_iou,
     compute_nms,
     compute_precision_recall_curve,
+    compute_soft_nms,
 )
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "compute_iou",
     "compute_nms",
     "compute_precision_recall_curve",
+    "compute_soft_nms",
     "cxcywh_to_xyxy",
     "normalized_to_xyxy",
     "voc_to_coco",
