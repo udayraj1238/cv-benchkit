@@ -155,6 +155,41 @@ def xyxy_to_xywh(
     ------
     ValueError
         If ``sanitize=False`` and any box has ``x_max < x_min`` or ``y_max < y_min``.
+
+    Notes
+    -----
+    Input is cast to ``float64``, so the output is always ``float64``. A 1D
+    input of shape ``(4,)`` is treated as a single box and returned with shape
+    ``(1, 4)``. An empty ``(0, 4)`` input returns an empty ``(0, 4)`` array.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> boxes = np.array([[10, 20, 50, 80], [0, 0, 100, 100]])
+    >>> xyxy_to_xywh(boxes)
+    array([[ 10.,  20.,  40.,  60.],
+           [  0.,   0., 100., 100.]])
+
+    A single 1D box is returned as a ``(1, 4)`` array:
+
+    >>> xyxy_to_xywh(np.array([10, 20, 50, 80])).shape
+    (1, 4)
+
+    An empty input returns an empty ``(0, 4)`` array:
+
+    >>> xyxy_to_xywh(np.empty((0, 4))).shape
+    (0, 4)
+
+    Inverted boxes raise ``ValueError`` unless ``sanitize=True``, which swaps
+    the coordinates first:
+
+    >>> inverted = np.array([[50, 80, 10, 20]])
+    >>> xyxy_to_xywh(inverted)
+    Traceback (most recent call last):
+        ...
+    ValueError: Found inverted bounding box where x_max < x_min or y_max < y_min
+    >>> xyxy_to_xywh(inverted, sanitize=True)
+    array([[10., 20., 40., 60.]])
     """
     boxes = np.asarray(boxes, dtype=np.float64)
     if boxes.ndim == 1:
